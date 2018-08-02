@@ -1,3 +1,12 @@
+//
+// Vanilla-Processors-Doc (c) 2018 by Benjamin Fabricius <ben@htaudio.de>
+//
+// Vanilla-Processors-Doc is licensed under a
+// Creative Commons Attribution-ShareAlike 4.0 Unported License.
+//
+// You should have received a copy of the license along with this
+// work.  If not, see <http://creativecommons.org/licenses/by-sa/4.0/>.
+
 = Vanilla Processors Concept 2: Analog Style Distortion
 Benjamin Fabricius <ben@htaudio.de>
 :toc:
@@ -22,7 +31,7 @@ in chapter 2 of Vanilla Processors we take a look at some of the more popular ap
 == The effect profile
 
 The distortion effect class we will be taking a closer look at designing is mostly referred to as waveshapers or saturators.
-Both types of signal processing are in the family of effects that introduce amplitude distortion or harmonic distortion analog to the what was achieved with bit-depth reduction in the bitcrusher, see chapter 1 of this book.
+Both types of signal processing are in the family of effects that introduce amplitude distortion or harmonic distortion similarly to what was achieved with bit-depth reduction in the bitcrusher, see chapter 1 of this book.
 The name waveshaping stems from the fact that the input signal is "shaped" by the effect and the output waveform's amplitude appears distorted at the output when viewed through an oscilloscope, hence the classification as amplitude distortion.
 The term saturator is derived from the impact the effect has when the output signal is compared to the input in the frequency domain.
 When driving the system with a pure sine wave tone and analysing the output in an FFT analyser, the output appears saturated with overtones, hence the classification as harmonic distortion.
