@@ -1,0 +1,344 @@
+= Vanilla Processors Concept 2: Analog Style Distortion
+Benjamin Fabricius <ben@htaudio.de>
+:toc:
+:revnumber: 0.3
+:revdate: 02-08-2018
+:revremark: Finishing matlab simulation, starting FAUST rt-model.
+:version-label!:
+// :math:
+:imagesoutdir: generated_images
+:imagesdir: images
+:stem: latexmath
+
+Analog distortion is especially popular with guitar players.
+Some amplifiers are famous for their signature saturating distortion and distortion effect pedals are found designed with a vast variety of built-in distortion circuits.
+Typically these circuits are built around either vacuum tubes, transistor stages, diode clippers or op-amps.
+Analysis of electrical designs making use of these components yields that they have non-linear transfer behaviour in common.
+These non-linear system transfer characteristics cause a more or less harmonically distorted output depending how the circuit is driven.
+Digitally emulating these circuits means modelling this non-linear behaviour as best possible with a digital processor.
+Numerous techniques have been brought up in research over the years and
+in chapter 2 of Vanilla Processors we take a look at some of the more popular approaches to digitally emulate analog style distortion effects.
+
+== The effect profile
+
+The distortion effect class we will be taking a closer look at designing is mostly referred to as waveshapers or saturators.
+Both types of signal processing are in the family of effects that introduce amplitude distortion or harmonic distortion analog to the what was achieved with bit-depth reduction in the bitcrusher, see chapter 1 of this book.
+The name waveshaping stems from the fact that the input signal is "shaped" by the effect and the output waveform's amplitude appears distorted at the output when viewed through an oscilloscope, hence the classification as amplitude distortion.
+The term saturator is derived from the impact the effect has when the output signal is compared to the input in the frequency domain.
+When driving the system with a pure sine wave tone and analysing the output in an FFT analyser, the output appears saturated with overtones, hence the classification as harmonic distortion.
+Depending on the waveshaping applied, the overtones can be odd- or even numbered multiples of the fundamental tone or both.
+Even though this effect carries several names, they refer to the same thing in this particular case.
+
+NOTE: When describing distortion in an abstract way, we can say distortion happens in a system that modulates an input signal's amplitude non-linearly (i.e. mapping the input- to the output amplitude differently depending on the input amplitude).
+This is what a saturator does but also what happens when you use compressors, limiters or ring modulators on your inputs.
+
+=== Control Parameters
+
+Distortion effects are often parametrised with input and output drive and ways to shape the input- and output tone before and after the non-linearity.
+The pre- and post attenuation factors are used to drive the distortion characteristic and to tame the output amplitude of the distorted signal whereas the pre- and post filtering can help dial in the harmonic content that is processed and that is obtained after processing in the non-linear system.
+This user interface setup is typically used in one or the other was for many guitar distortion pedals.
+One example of emulating saturation is software is the native saturator plugin in Ableton Live which implements these controls wile adding others. Check out this effect interface by watching https://www.youtube.com/watch?v=b9CqQQrW3xA[this video].
+
+== The theory behind the effect
+
+Let's take a closer look at some of the theory surrounding digital, analog distortion which is also called virtual analog distortion.
+
+=== Circuit Analysis
+
+Virtual analog style effects aim to model the characteristic sound of analog circuitry.
+Generally, distortion circuits consist of stem:[n] linear systems (aka filters) that surround a non-linearity.
+Both designs with or without feedback loops are possible, see the definition of the https://youtu.be/7Npx0eaSxow?t=5m6s[delay-free loop].
+In order to derive a digital model representation of the original circuit there exists an array of continuous domain tools that can be applied.
+The two steps necessary for emulating the original are modelling the circuit in continuous time using tools such as https://youtu.be/7Npx0eaSxow?t=14m20s[nodal analysis] (i.e Kirchhoffs laws) or https://youtu.be/7Npx0eaSxow?t=26m31s[state-space analysis] and then transforming these models from continuous into discrete time using a transformation such as the https://en.wikipedia.org/wiki/Bilinear_transform[Bilinear Transform] or https://en.wikipedia.org/wiki/Backward_differentiation_formula[Backwards Differentiation].
+In the next chapter we will focus on some simple circuit analysis of both linear and non linear components and see how we can derive a memoryless saturating transfer function to get quite close to approximating the non-linearity.
+We will use some simple pre- and post-filtering to surround our non-linearity with which to model the linear part of the system.
+No matter what technique is chosen to model the analog circuit digitally, the focus should also be directed to finding a representation that is computationally efficient enough for real-time use without stressing the processing CPU too much.
+
+=== VA distortion model types
+
+The types of virtual analog distortion models can be roughly split into three categories.
+
+  . Waveshaping with saturating (clipping) functions: using static functions that approximate analog non-linearities and surrounding them with digital filters to shape the distortion tone to taste
+  . Approximating behaviour of a circuit block model (as modelled https://en.wikipedia.org/wiki/Ordinary_differential_equation[Ordinary Differential Equations (ODE)]}): using Volterra expansion or convolution for example, implemented with or without memory, with or without operating point bias
+  . Realtime simulation of the circuit block ODEs with numerical (iterative) solvers (implicit, explicit) using solvers like Newton, Forward Euler, Runge-Kutta etc.
+
+As mentioned in the last chapter, we will approach distortion emulation using the first technique described.
+The second and third approach are more advance and will be beyond the scope of this discussion.
+These advanced approaches are taken to make the model capable of emulating the analog original even more closely using system modelling techniques that are based on ordinary differential equations.
+ODE solving at realtime is computationally expensive and a difficult problem to solve efficiently in realtime which is why we will not consider these techniques here.
+
+NOTE: For the interested, the next two sections take a high-level look at some topics included in more sophisticated models such as the methods (2) and (3).
+Feel free to skip ahead if you want.
+Also, get to know more about advanced circuit modelling by viewing this great https://www.youtube.com/watch?v=7Npx0eaSxow[DAFX17 workshop] by Dave Berners.
+
+=== Modelling memoryless vs. with memory
+
+The standard way of implementing digital distortion is by using a static non-linearity (see clipping functions discussed later).
+These functions are often tabulated (i.e. in a lookup table) and interpolated for efficiency or designed in the form of polynomial expressions, using a https://en.wikipedia.org/wiki/Spline_interpolation[spline-fit] for example.
+Some polynomials, such as https://en.wikipedia.org/wiki/Chebyshev_polynomials[Chebyshev-Polynomials].
+and others are used to control the harmonic distortion caused by the effect, as discussed in this https://dsp.stackexchange.com/questions/5959/add-odd-even-harmonics-to-signal[thread at dspstackexchange].
+Using a model without memory (aka. static) means that the output at each sample stem:[n] in time is not dependent on the state of the system at sample step stem:[n-1].
+In real analog non-linear systems this is never the case though.
+These systems have a behaviour at time stem:[t] which is influenced by it's states at that point in time.
+Memory is implemented in a digital emulation by keeping track of the systems states, in other words considering the states at sample step stem:[n-1] for calculation of the output stem:[y[n]].
+
+=== Modelling with operating point bias
+
+A large amount of analog distortion circuits consist of a linear part connected to a non-linear part.
+For the linear part of the system it is always possible to https://youtu.be/7Npx0eaSxow?t=8m27s[derive a linear equation] to describe the transfer characteristic.
+This characteristic depends on the components used in the circuit, the inputs over time and on the system state as a function of time if the circuit contains https://en.wikipedia.org/wiki/Electrical_reactance[reactances].
+Assuming we model the non-linearity as memoryless function of the input, then in order to emulate the system, the intersection of both equations should be found for sample step stem:[n].
+Finding the intersection of the linear load line with the non-linear function is called operating point bias or loading.
+Once the operating point is set the model can be solved numerically for the current sample step.
+
+=== Intermodulation
+
+Aside from harmonic distortion as seen when driving a saturator with a sine wave at a fundamental frequency, non-linearities produce https://science-of-sound.net/2016/09/understanding-intermodulation-distortion/[frequency intermodulations] as soon as they are processing complex input waveforms consisting of the sum of more than one frequency.
+The location of the harmonic content added in the audio band can be calculated methodologically and becomes more and more complex with the order of frequencies in input signal.
+Miller Puckette takes a look at a simple example of https://books.google.ch/books?id=TCtnWBfyhbwC&pg=PA130&lpg=PA130&dq=miller+puckette+intermodulation&source=bl&ots=oHB_srVuzJ&sig=7Uo82fUYnrUJuGC2VLkhWcw851w&hl=de&sa=X&ved=0ahUKEwjgxdb4vKvcAhXEiCwKHR3vBZkQ6AEIeDAS#v=onepage&q=miller%20puckette%20intermodulation&f=false[analysing intermodulation for a non-linearity] in his book on the theory of electronic music.
+Sometimes intermodulation distortion is desired, for example when playing power chords through overdrive as it can cause pleasing sub-harmonic content, other times it is unwanted, for example when mixing music, as it can cause glitches in the mix such as audible amplitude batting.
+What intermodulation content to retain and what of it to dismiss when modelling VA systems comes down to a decision in the design process.
+
+=== Antialiasing
+
+Any type of https://www.howtogeek.com/64096/htg-explains-how-do-guitar-distortion-and-overdrive-work/[distortion] on an input signal causes bandwidth expansion in the frequency domain.
+At regular audio sample rates (i.e 44.1kHz) this will lead to https://en.wikipedia.org/wiki/Aliasing[frequency reflections] in the audio band.
+These reflections - called foldover or https://science-of-sound.net/2016/06/oversampling-distortion-effects/[aliases] in the frequency domain - can be audible (especially for high frequencies) and to make things worse, aliases can intermodulate with other frequency content in feedback loops.
+While creating aliases is the trademark of effects such as the bitcrusher, aliasing is mostly unwanted in high quality digital distortion.
+The straight forward approach to remove aliases is to https://www.oblique-audio.com/technique/oversampling[oversample] by a factor stem:[n] , then process the non-linearity and down-sample (filter) again before outputting.
+Depending on stem:[n], this can become computationally expensive though at high values.
+
+=== Infinite linear oversampling (ILO)
+
+ILO is an attempt at lowering the stress linear oversampling puts on the digital processor by calculating stem:[n] times more often in order to obtain all the virtual, upsampled sample values between two sample steps.
+The technique substantially lowers aliases by applying a trick that we can approach rather geometrically.
+Before doing this, let me take a moment to focus on aliasing in a less mathematical fashion.
+Aliasing in analog-digital conversion happens if we take an analog signal and sample it (i.e. modulate it) and want to convert the digital, sampled signal back into an analog one but can no longer exactly guarantee what we convert back is exactly the same as the original.
+Picture sampling a sine running at high frequency by hand using a low sample rate.
+You could do this by drawing points into a graph over sample time.
+If you convert back to the analog world by drawing a line that connects your dots in the graph and you have made sure to break the Nyquist law with the sample frequency chosen you will end up with several ways to draw a sine wave through your points.
+The conversion back to continuous time now has an ambiguous solution: it creates an alias in the frequency domain.
+Turning the attention back to waveshaping, we can find the same thing happening when processing our samples with a non-linear clipping function.
+If we take a hard-clipper for example, and look at two output samples that were processed where one was not distorted and the next was, who is to say that for the continuous input the clipping actually happened at the exactly the sampling step and not in-between these steps?
+In other words there is a high chance that if we compare running an analog signal through a clipping circuit and do the same with our digital version of the clipper, the latter will result in an inaccurate representation of the former in the sense of when exactly clipping actually started.
+This situation quickly makes sense when drawing some examples onto paper.
+In the end we have an ambiguity again which leads to aliasing when distorting.
+Linear oversampling reduces inaccuracy by adding more samples in between steps to prevent aliases from happening, but the cost is that the processing effort is multiplied by the order of the oversampling factor.
+ILO uses a trick to avoid high inaccuracy (and a lot of aliases) while not adding stem:[n] time more processing load, which is to calculate the sum of an infinite amount of samples between two sampling steps and then average over the amount of samples between the two.
+This is no longer linear oversampling by the order of stem:[n], but by an infinite order.
+The actual trick is how to obtain infinite upsampled values in a digital realm.
+This can be done by integrating over the actual clipping function.
+Given inputs stem:[x[n-1]] and stem:[x[n]], we calculate both the integrals of our clipping function over an interval of stem:[[0;n-1]] and stem:[[0;n]].
+When we subtract them from each other we arrive at the sum of infinite samples (or slices if you so want) between step stem:[n-1] and stem:[n].
+Now what is left to do is to average over the amount of samples given by subtracting stem:[x[n-1]] from stem:[x[n]] to get our approximated input signal after oversampling.
+This is done by dividing the sum of integrals by the amount of events between both samples.
+It turns out that by using this trick you save on CPU load while getting very far in removing aliasing from the effected output.
+ILO was developed by a group of employees at Native Instruments and https://www.researchgate.net/publication/308020367_Reducing_The_Aliasing_Of_Nonlinear_Waveshaping_Using_Continuous-Time_Convolution[presented at DAFX16].
+You can find a non-academical approach to ILO in the https://www.native-instruments.com/de/reaktor-community/reaktor-user-library/entry/show/10381/[Reaktor user library].
+
+NOTE: When summing up ILO in a nutshell, what we are doing is integrating our clipping function for two successive input values to get all possible sample slices between the two samples and then https://en.wikipedia.org/wiki/Differential_calculus#Mean_value_theorem[differentiating] (averaging) over the sampling period in time between them to end up in our linearly oversampled result without having to do calculations in the CPU at the factor of stem:[n] times.
+Another way of putting this is, we move from a discrete time signal to a continuous signal using integration, then run the signal through the clipper and move it back to discrete time with differentiation.
+
+== Designing the effect
+
+Now that we have taken a closer look at the theory the effect is based on we can move on to designing our own analog style saturator effect.
+
+TIP: This book will not drop heaps of formulas on you, the reader. With this book, we have published some math sheets that sum up the most relevant calculations for you to keep this book from becoming cluttered.
+If you are interested in designng and building your own effect implementation, I suggest you study the mathemagics sheet and the build book for this effect.
+Both are distributed with each chapter and maintained in our github repository.
+
+We will take the following steps to develop our design:
+
+. circuit analysis to arrive at a continuous system model that can be approximated in a static non-linear clipping function
+. simulate the model in matlab
+. implement and run the model in real-time using FAUST
+
+=== Analysing the Boss DS-1 diode limiter
+
+The https://www.boss.info/us/products/ds-1/[Boss DS-1] pedal is a classic guitar distortion effect.
+The circuit consists of a number of linear subsystems surrounding two main non-linearities, an non-inverting op-amp gain-stage and a diode-limiter that follows it.
+The non-linear systems are designed to boost and load the non-linearities and the tone stack is located after the distortion stages to sculpt the tone which is output by it.
+In this example I am going to focus the analysis of the diode-limiter only.
+The limiter circuit is made up of a RC low pass filter with a diode clipper across the capacitor.
+We can look up a model representation for the pn diode which can be used to calculate it's output current.
+The model contains parameters (or system states) describing the reverse saturation current and the thermal voltage.
+Typically the parameters can be extracted by measurement in the circuit.
+With the help of Kirchhoffs Laws we can arrive at an ODE that models the limiter:
+
+[stem]
+++++
+\frac{\partial V_o}{\partial t} = \frac{V_i-V_o}{RC}-2\frac{I_s}{C}(\sinh (V_o/V_t))
+++++
+
+Since we can see a term in the nominator of the filter that changes with voltage (stem:[V_i-V_o]) this model has memory, since the filter characteristic changes depending on the in- and output voltage.
+For simplicity, we can approximate statically, by setting the change in the voltage term to stem:[0] over time.
+What we have arrived at now is a model with an input-output characteristic that can be compared to analytic approximations based on hyperbolic tangent and arctangent functions.
+One measure to take at this point would be to run the model in a simulation to plot the transfer behaviour and then think about how to best approximate it.
+Based on this investigation, we could decide if we want to choose to design a tabulated and interpolated approximation of the transfer function (can get very close to the actual transfer curve) or if we want to go with a general formula to approximate the characteristic.
+If we decide to go ahead with this alternative we can determine following approximation
+
+[stem]
+++++
+\frac{x}{(1+|x|^{n})^{1/n}}
+++++
+
+that matches the original quite well for stem:[n=2.5].
+stem:[n] can be used to further tweak this static non-linearity to taste.
+We can now implement this clipping function in our saturator.
+If you want to dive deeper into the circuit analysis, check out the https://pdfs.semanticscholar.org/9903/44e66aa3851e90fc7a825f7481a33be21ecf.pdf[paper I have based this section on].
+
+==== Other static non-linear clipping models
+
+For your interest, here's a list of other popular clipping functions without explicitly explaining how they were derived:
+
+Examples of saturating clipping functions::
+  * hyperbolic tangent: stem:[f(x)=\tanh(x)]
+  * inverse tangent (arctan): stem:[f(x)=\tan^{-1}(x)]
+  * numerical approx. of hyperbolic tangent: stem:[f(x)=\frac{1}{(1+|x|^n)^{1/n}}]
+  * hard clipping: stem:[f(x)=\begin{cases} x, & |x|\leq a \\ a, & \text{otherwise} \end{cases}]
+  * Sullivan cubic soft-clipper: stem:[f(x)=\begin{cases} -\frac{2}{3}, & |x|\leq -1 \\ x-\frac{x^3}{3}, & -1\leq x \leq 1 \\ \frac{2}{3}, & |x|\geq 1 \end{cases}]
+
+These could be used for additional presets used in the saturator and if you take a closer look at these functions, you will probably have encountered them built into some audio plugins.
+
+=== Matlab model simulation
+
+Matlab scripts can be utilised to simulate our model and plot some results to graphs we can use to check if it works as expected.
+We'll define three plots that are of interest:
+
+  * plot of the approximation of the non-linear, hyperbolic clipping function
+  * a pure input sine-wave compared to one that has been amplified and processed by the saturator
+  * the frequency spectrum of a pure sine-wave input compared to the spectrum of an amplified sine-wave which has been saturated
+
+In oder to run our simulation in matlab we need to set up some input data to work with. The following table gives details on how we can define some input data.
+
+[cols="1,1,2", options="header"]
+.Input data specification
+|===
+|Name
+|Declaration Example
+|Description
+
+|Sample rate
+|`Fs=44100`
+|The sample rate, set to stem:[44.1kHz] here
+
+|Discrete step
+|`Ts=1/Fs`
+|The discrete time step as in the time (period) between samples
+
+|Nyquist frequency
+|`fnyquist=44100/2`
+|The Nyquist frequency
+
+|Input voltages
+|`v_i=-4:0.01:4`
+|Input voltages that are to be processed by the model of the non-linear diode clipper
+
+|Samples steps
+|`t=0:Ts:1`
+|Sample times in the time interval between stem:[0s] and stem:[1s]
+
+|Input frequency
+|`f=400`
+|A frequency set to stem:[400Hz] here
+
+|Input sine
+|`x=sin(2*pi*f*t)`
+|A pure input sine running at rate stem:[f] and sampled with stem:[Fs]
+
+|Amplification factor
+|`af=1.5`
+|Amplification factor set to stem:[1.5] here
+
+|Hyperbolic tweaking factor
+|`n=2.5`
+|Factor n for tweaking the hyperbolic clipping function, set to stem:[2.5] here
+
+|Length of signal
+|`N=length(x)`
+|The amount of signal samples to deal with
+
+|===
+
+With the input data set up properly we can move on to generating our simulation plots.
+First, let's plot the non-linear clipping function as output voltage stem:[V_o] over input voltage stem:[V_i].
+The plot uses the input voltages `v_i` and processes them with the clipping model.
+You can see that the plot clearly shows the non-linear characteristic of the diode-clipper we are approximating.
+
+.The diode limiter clipping function
+image::diode_limiter_matlab.png[The diode limiter clipping function]
+
+In oder to get an idea of what the clipper does when being run on audio samples we can compare a pure sine wave with one that has been processed by the saturating function.
+In the following plot you can see the unprocessed input signal `x` on the left side.
+The right side of the image depicts a plot of the amplified input `4*x` processed by the diode-clipper model.
+The high amplification was chosen so that you can get a clear picture of how the saturator works on a wave-form.
+
+.Pure sine waveform vs. a 4-times amplified, clipped sine waveform
+image::sine-vs-distorted-sine.png[Pure sine waveform vs. an 4-times amplified, clipped sine waveform]
+
+For the final plot we can lower `af` to stem:[1.5].
+As you can see in the next image on the right-hand side, even at a low amplification, the saturator clearly adds new harmonic content in the form of odd harmonic overtones (i.e. at 3,5,7,... times the fundamental frequency).
+For better reference the magnitude spectrum of the unprocessed sine-wave is shown on the left-hand side.
+
+.Magnitude spectrum of a pure and a clipped sine wave, sine running at 400Hz and amplified by 1.5 before being clipped
+image::pure-vs-clipped-dft.png[Magnitude spectrum of a pure and a clipped sine wave, sine running at 400Hz and amplified by 1.5 before being clipped]
+
+The octave simulation has shown that the model of the DS-1 diode clipper is saturating audio input in the way that we expected.
+
+TIP: All octave scripts that were used to generate these plots are available for download in our https://github.com/bfabricius?tab=repositories[open source repositories].
+TODO: Change this link.
+
+What remains to be done now, is to implement a real-time model for it.
+This will be discussed in the next chapter.
+
+=== FAUST real-time model implementation
+
+http://faust.grame.fr/[FAUST] is a functional programming language intended to design high-level signal processor with a block diagram approach in mind.
+We will use it to develop a model implementation of our saturator that can be run at real-time.
+There is an https://ccrma.stanford.edu/realsimple/faust_strings/Cubic_Nonlinear_Distortion.html[example of cubic non-linear distortion] in the FAUST distribution effect example libraries that we can inspect to get started with.
+
+
+
+image::concept-script-a4409.png[Typical memoryless saturator with pre- and post-gain]
+
+image::concept-script-190e2.png[Saturating Feedback Loop]
+
+
+
+
+
+== Reference Reading
+
+Distortion Explained::
+  * https://www.howtogeek.com/64096/htg-explains-how-do-guitar-distortion-and-overdrive-work/[how-to-geek: distortion]
+  * https://en.wikipedia.org/wiki/Distortion[distortion wiki]
+
+Infinite Linear Oversampling (ILO)::
+  * https://www.native-instruments.com/de/reaktor-community/reaktor-user-library/entry/show/10381/
+  * https://www.reaktortutorials.com/media/anti-aliased-waveshaper/61160/feature[Reaktor Implementation and non-academic explanation of ILO]
+  * https://www.researchgate.net/publication/308020367_Reducing_The_Aliasing_Of_Nonlinear_Waveshaping_Using_Continuous-Time_Convolution[DAFX 17 paper on infinite linear oversampling]
+
+MTeX2MML::
+  * https://github.com/gjtorikian/mtex2MML/blob/master/SUPPORTED.md[Cheet Sheat]
+
+DAFX Workshops::
+  * https://www.youtube.com/watch?v=7Npx0eaSxow[Dave Berners - Modeling Circuits with Nonlinearities in Discrete Time (DAFX-17)]
+    ** Basics of circuit analysis: Nodal analysis, State-Space analysis
+
+Papers::
+  * http://research.spa.aalto.fi/publications/papers/smc17-wavefolder/[Virtual Analog Model of the Lockhart Wavefolder]
+  * A tutorial on non-linear distortion or waveshaping synthesis
+  * Digital waveshaping synthesis
+  * Audio synthesis by bitwise logical modulation
+  * Aliasing reduction in clipped signals
+
+Physical Modelling for Audio::
+  * JULIUS O. SMITH III, Physical Modelling for audio, CCRMA
+  * https://ccrma.stanford.edu/~jos/pasp/Memoryless_Nonlinearities.html[Linear system surrounding memoryless non-linearity]
+
+EQ Filter Cookbook::
+  * http://www.musicdsp.org/files/Audio-EQ-Cookbook.txt
+
+Circuits::
+  * https://www.allaboutcircuits.com/textbook/semiconductors/chpt-4/bipolar-junction-transistors-bjt/[BJT Transistors (Intro)]
+  * http://www.cgs.synth.net/modules/cgs52_folder.html[Simple Wave Folder for music synthesizers]
