@@ -10,9 +10,9 @@
 = Vanilla Processors Concept 2: Analog Style Distortion
 Benjamin Fabricius <ben@htaudio.de>
 :toc:
-:revnumber: 0.3
+:revnumber: 0.4
 :revdate: 02-08-2018
-:revremark: Finishing matlab simulation, starting FAUST rt-model.
+:revremark: Faust implementation ds1clip, infinite linear oversampling
 :version-label!:
 // :math:
 :imagesoutdir: generated_images
@@ -41,7 +41,7 @@ Even though this effect carries several names, they refer to the same thing in t
 NOTE: When describing distortion in an abstract way, we can say distortion happens in a system that modulates an input signal's amplitude non-linearly (i.e. mapping the input- to the output amplitude differently depending on the input amplitude).
 This is what a saturator does but also what happens when you use compressors, limiters or ring modulators on your inputs.
 
-=== Control Parameters
+=== Control parameters
 
 Distortion effects are often parametrised with input and output drive and ways to shape the input- and output tone before and after the non-linearity.
 The pre- and post attenuation factors are used to drive the distortion characteristic and to tame the output amplitude of the distorted signal whereas the pre- and post filtering can help dial in the harmonic content that is processed and that is obtained after processing in the non-linear system.
@@ -102,10 +102,10 @@ Once the operating point is set the model can be solved numerically for the curr
 
 === Intermodulation
 
-Aside from harmonic distortion as seen when driving a saturator with a sine wave at a fundamental frequency, non-linearities produce https://science-of-sound.net/2016/09/understanding-intermodulation-distortion/[frequency intermodulations] as soon as they are processing complex input waveforms consisting of the sum of more than one frequency.
+Aside from harmonic distortion as seen when driving a saturator with a pure sine wave, non-linearities produce https://science-of-sound.net/2016/09/understanding-intermodulation-distortion/[frequency intermodulations] as soon as they are processing complex input waveforms consisting of the sum of more than one frequency.
 The location of the harmonic content added in the audio band can be calculated methodologically and becomes more and more complex with the order of frequencies in input signal.
 Miller Puckette takes a look at a simple example of https://books.google.ch/books?id=TCtnWBfyhbwC&pg=PA130&lpg=PA130&dq=miller+puckette+intermodulation&source=bl&ots=oHB_srVuzJ&sig=7Uo82fUYnrUJuGC2VLkhWcw851w&hl=de&sa=X&ved=0ahUKEwjgxdb4vKvcAhXEiCwKHR3vBZkQ6AEIeDAS#v=onepage&q=miller%20puckette%20intermodulation&f=false[analysing intermodulation for a non-linearity] in his book on the theory of electronic music.
-Sometimes intermodulation distortion is desired, for example when playing power chords through overdrive as it can cause pleasing sub-harmonic content, other times it is unwanted, for example when mixing music, as it can cause glitches in the mix such as audible amplitude batting.
+Sometimes intermodulation distortion is desired, for example when playing power chords through overdrive as it can cause pleasing sub-harmonic content, other times it is unwanted, for example when mixing music, as it can cause glitches in the mix such as audible amplitude batting and raised noise floors.
 What intermodulation content to retain and what of it to dismiss when modelling VA systems comes down to a decision in the design process.
 
 === Antialiasing
@@ -117,7 +117,7 @@ While creating aliases is the trademark of effects such as the bitcrusher, alias
 The straight forward approach to remove aliases is to https://www.oblique-audio.com/technique/oversampling[oversample] by a factor stem:[n] , then process the non-linearity and down-sample (filter) again before outputting.
 Depending on stem:[n], this can become computationally expensive though at high values.
 
-=== Infinite linear oversampling (ILO)
+=== Infinite Linear Oversampling (ILO)
 
 ILO is an attempt at lowering the stress linear oversampling puts on the digital processor by calculating stem:[n] times more often in order to obtain all the virtual, upsampled sample values between two sample steps.
 The technique substantially lowers aliases by applying a trick that we can approach rather geometrically.
@@ -167,12 +167,22 @@ We will take the following steps to develop our design:
 The https://www.boss.info/us/products/ds-1/[Boss DS-1] pedal is a classic guitar distortion effect.
 The circuit consists of a number of linear subsystems surrounding two main non-linearities, an non-inverting op-amp gain-stage and a diode-limiter that follows it.
 The non-linear systems are designed to boost and load the non-linearities and the tone stack is located after the distortion stages to sculpt the tone which is output by it.
-In this example I am going to focus the analysis of the diode-limiter only.
+In this example I am going to focus the analysis of the diode-limiter only as shown in the image below.
+
+.The Boss DS-1 diode clipper circuit
+image::bs-ds1-diode-clipper.png[The Boss DS-1 diode clipper circuit]
+
 The limiter circuit is made up of a RC low pass filter with a diode clipper across the capacitor.
-We can look up a model representation for the pn diode which can be used to calculate it's output current.
-The model contains parameters (or system states) describing the reverse saturation current and the thermal voltage.
-Typically the parameters can be extracted by measurement in the circuit.
-With the help of Kirchhoffs Laws we can arrive at an ODE that models the limiter:
+We can look up a model representation for the pn diode which can be used to calculate it's output current:
+
+[stem]
+++++
+I_d=I_s(e^{V/V_t}-1)
+++++
+
+stem:[V_s] is the reverse saturation current and stem:[V_t] is the thermal voltage.
+Typically these system parameters can be extracted by measurement in the circuit.
+With the help of Kirchhoff's Laws we can arrive at an ODE that models the limiter:
 
 [stem]
 ++++
@@ -289,16 +299,22 @@ For the final plot we can lower `af` to stem:[1.5].
 As you can see in the next image on the right-hand side, even at a low amplification, the saturator clearly adds new harmonic content in the form of odd harmonic overtones (i.e. at 3,5,7,... times the fundamental frequency).
 For better reference the magnitude spectrum of the unprocessed sine-wave is shown on the left-hand side.
 
+TIP: All symmetrical non-linearities such as the diode-clipper cause the even harmonics to be cancelled out due to the relationship of phase in the overtones added by modelling the two inverted diodes in the original distortion circuit.
+All even order harmonics are always stem:[180°] apart in the time domain, thus inverted which leads to them cancelling each other.
+The asymmetrical distortion caused by using only one diode instead of two in the circuit we emulated would actually cause the even-order harmonic content to re-appear.
+If we wanted to add even-order harmonics while sticking to our symmetrical diode-clipper design, we would have to offset the input signal, making the input asymmetrical.
+This is called applying a DC-offset to the input.
+When using the symmetrical clipper and DC offset applied at the input before processing the non-linearity the output will be asymmetrically shaped in effect and even-order harmonics will be re-introduced.
+
 .Magnitude spectrum of a pure and a clipped sine wave, sine running at 400Hz and amplified by 1.5 before being clipped
 image::pure-vs-clipped-dft.png[Magnitude spectrum of a pure and a clipped sine wave, sine running at 400Hz and amplified by 1.5 before being clipped]
 
 The octave simulation has shown that the model of the DS-1 diode clipper is saturating audio input in the way that we expected.
+What remains to be done now, is to implement a real-time model for it.
+This will be discussed in the next chapter.
 
 TIP: All octave scripts that were used to generate these plots are available for download in our https://github.com/bfabricius?tab=repositories[open source repositories].
 TODO: Change this link.
-
-What remains to be done now, is to implement a real-time model for it.
-This will be discussed in the next chapter.
 
 === FAUST real-time model implementation
 
@@ -306,11 +322,103 @@ http://faust.grame.fr/[FAUST] is a functional programming language intended to d
 We will use it to develop a model implementation of our saturator that can be run at real-time.
 There is an https://ccrma.stanford.edu/realsimple/faust_strings/Cubic_Nonlinear_Distortion.html[example of cubic non-linear distortion] in the FAUST distribution effect example libraries that we can inspect to get started with.
 
+Implementing the block diagram for the clipper is straight forward.
+The distortion path is created inside a bypass architecture so that the effect can switch between a clean and an effect path by toggling a value.
 
+.Overview of the DS-1 clipper block diagram
+image::TopLevelClipperDiagram.png[Overview of the DS-1 clipper blockdiagram]
 
-image::concept-script-a4409.png[Typical memoryless saturator with pre- and post-gain]
+The clean path will not effect the input while the effect will work when bypass is switched off.
+The effect path consists of a series of blocks.
+First we apply a pre-gain to the signal, the gain can be controlled with the input parameter called "drive".
+Then we apply a DC-offset to the amplified signal.
+The amount of offset is controlled by the "offset" parameter.
+Both parameters, "drive" and "offset", can be set with slider UI elements.
+We will make sure that we smooth the stepped parameters with a simple low pass filter so that there are no crackling glitches caused by discrete parameter steps.
+After offsetting the signal, we pass it through a hard clipping stage, to prevent samples from being outside the normalised value range and then pass the samples into the actual waveshaping non-linearity of the clipper labelled "ds1clp" in the diagram.
 
-image::concept-script-190e2.png[Saturating Feedback Loop]
+.Exponential scale and range of the pregain block, the x-axis describes the range of the raw "drive" slider value inputs
+image::pregain-scaling.png[Exponential scale and range of the pregain block, the x-axis describes the range of the raw "drive" slider value inputs]
+
+You can see the "offset" parameter clearly in the diagram, the "drive" is located in the pre-gain block where we perform some scaling of the raw slider value after smoothing the parameter to transform the value into a more extreme, exponential range.
+Selecting parameter range transformations is an experimental process and can be done while testing the effect in development.
+
+.The main effect block diagram of the DS-1 clipper
+image::ClipperOverviewDiagram.png[The main effect block diagram of the DS-1 clipper]
+
+The distorted samples are finally passed to a DC-blocker filter stage.
+This filter blocks any low frequency energy created by existing DC-offset applied to the input.
+The offset could have been applied by the offset parameter in the clipper effect or the input signal could already contain offset from the get go.
+Since the low-frequency energy does not add to the timbre of the output and causes the output to peak higher it is not a bad idea to install this filter before the output and to keep it active always.
+The DC filter has an order of stem:[1] and a near flat phase response except for a slight peak of around stem:[35°] close to DC. 3dB Point???
+
+NOTE:
+Refer to the mathemagics sheet for this chapter available in our repositories for details on all the componennts used in this FAUST diagram design.
+
+=== Implementing Infinite Linear Oversampling
+
+For a basic implementation of ILO we will have to add some additional signal processing into our effect design.
+We will build on our basic implementation and add to it the ILO method.
+ILO works by virtually moving back from the discrete into the continuous time domain, then processing the non-linearity and finally moving back to discrete time before sending out audio.
+As already discussed in the theoretical part of this article on ILO, we will need to work with integrating our waveshaper over a fixed interval for two input samples stem:[n] and stem:[n-1], then form the difference between them before differentiating back into discrete time.
+Following math will accomplish this for us:
+
+[stem]
+++++
+y(n)=\frac{\int clip(n)-\int clip(n-1)}{clip(n)-clip(n-1)}
+++++
+
+In order to get this to work, we will have to know the integral of our clipping function.
+A closer look at our approximation for the DS-1 clipper stem:[ds1clip] reveals that this clipping function is actually not trivial to integrate and the solution of the indefinite integral would be complex to implement computationally.
+For arguments sake, we will therefore use a different waveshaping function, one that has similar characteristics to stem:[ds1clip], is not as closely an approximation of the actual clipping circuit we analysed but far easier to integrate.
+The referred function is the hyperbolic tangent. It's plot resembles stem:[ds1clip] to a certain extent and was mentioned earlier in the list of typical waveshaping functions.
+
+.Plot of the hyperbolic tangent waveshaping function
+image::hyperbolic-tangent-plot.png[Plot of the hyperbolic tangent waveshaping function]
+
+Now, lets integrate stem:[y(x)=\tanh(x)]
+
+[stem]
+++++
+\int \tanh(x) dx = \log(\frac{1}{2}(e^{-x}+e^x))
+++++
+
+To experience the result of using the entire effect with ILO we will now assume that stem:[ds1clip(n)=\tanh(n)].
+
+.The integration of ds1clp results in a processor called ds1clp_int
+image::ds1clip-integral.png[The integration of ds1clp results in a processor called ds1clp_int]
+
+With this assumption made, ILO can now be added to our original design.
+Following image shows a block diagram for ds1clp_ilo, the ds-1 clipper with infinite linear oversampling applied to it.
+
+.FAUST diagram showing the ds1clp_ilo waveshaping processor with ILO being applied
+image::ds1clipper-with-ilo.png[FAUST diagram showing the ds1clp_integral waveshaping processor with ILO]
+
+The block in the nominator branch processes the difference of integrals of the clipper and the denominator branch calculates the difference between samples stem:[n] and stem:[n-1] run through ds1clp.
+The division of both branches completes our ILO algorithm.
+
+.The ds1clp_ilo_integraldiff processor
+image::ds1clp-ilo-integraldiff.png[The ds1clp_ilo_integraldiff processor]
+
+.The ds1clp_ilo_diff processor
+image::ds1clp-ilo-diff.png[The ds1clp_ilo_diff processor]
+
+To prevent unwanted warping we need to pay attention that the denominator difference does not equal stem:[0] as we would be performing a division by stem:[0] in that case.
+This can be done by checking if the difference is lower than a threshold, a small constant value like stem:[0.00001] for example.
+
+.Check to prevent warping by 0-division
+image::compare-against-warp.png[Check to prevent warping by 0-division]
+
+Should this be the case we simply output a sample processed by the non-antialiased version of the waveshaping function.
+The following image contains the top level diagram of the ds1clp processor implemented with Infinite Linear Oversampling and anti-warping.
+
+.Waveshaper with anti-warp and ILO
+image::final-ilo-clipper.png[Check to prevent warping by 0-division]
+
+== Testing the effect
+
+Now that we have built the effect with FAUST, we can put our effect through a
+series of tests to check if it processes audio in the way we expect it to.
 
 
 
@@ -334,6 +442,9 @@ DAFX Workshops::
   * https://www.youtube.com/watch?v=7Npx0eaSxow[Dave Berners - Modeling Circuits with Nonlinearities in Discrete Time (DAFX-17)]
     ** Basics of circuit analysis: Nodal analysis, State-Space analysis
 
+BOSS DS-1::
+  * https://ia600204.us.archive.org/10/items/boss_DS-1_SERVICE_NOTES/DS-1_SERVICE_NOTES.pdf[Service manual]
+
 Papers::
   * http://research.spa.aalto.fi/publications/papers/smc17-wavefolder/[Virtual Analog Model of the Lockhart Wavefolder]
   * A tutorial on non-linear distortion or waveshaping synthesis
@@ -344,6 +455,10 @@ Papers::
 Physical Modelling for Audio::
   * JULIUS O. SMITH III, Physical Modelling for audio, CCRMA
   * https://ccrma.stanford.edu/~jos/pasp/Memoryless_Nonlinearities.html[Linear system surrounding memoryless non-linearity]
+
+Linear / Nonlinear distortion::
+  * https://www.youtube.com/watch?v=CK0zl34nZJc[TSP #8 - Tutorial on Linear and Non-linear Circuits]
+  * https://www.youtube.com/watch?v=3syjHE2bZoQ[Intermodulation distortion audio example]
 
 EQ Filter Cookbook::
   * http://www.musicdsp.org/files/Audio-EQ-Cookbook.txt
